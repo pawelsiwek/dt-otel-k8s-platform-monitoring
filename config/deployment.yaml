@@ -1,0 +1,356 @@
+receivers:
+  k8s_cluster:
+    auth_type: serviceAccount
+    collection_interval: 60s
+    node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
+    allocatable_types_to_report: [cpu, memory, pods]
+
+  # Topology receiver: all objects in pull mode so every pod is discovered on
+  # each 120s cycle regardless of when it was created vs when the collector started.
+  # Watch mode only fires for changes after the watch begins, so pre-existing pods
+  # are invisible to it — pull mode is required for complete discovery.
+  k8s_objects/topology:
+    auth_type: serviceAccount
+    objects:
+      - name: namespaces
+        mode: pull
+        interval: 120s
+      - name: nodes
+        mode: pull
+        interval: 120s
+      - name: pods
+        mode: pull
+        interval: 120s
+      - name: services
+        mode: pull
+        interval: 120s
+      - name: deployments
+        group: apps
+        mode: pull
+        interval: 120s
+      - name: statefulsets
+        group: apps
+        mode: pull
+        interval: 120s
+      - name: daemonsets
+        group: apps
+        mode: pull
+        interval: 120s
+      - name: replicasets
+        group: apps
+        mode: pull
+        interval: 120s
+
+  # Events receiver: watch mode only — pods for OOM-kill detection,
+  # K8s events for KUBERNETES_EVENT Davis ingestion.
+  k8s_objects/events:
+    auth_type: serviceAccount
+    objects:
+      - name: pods
+        mode: watch
+      - name: events
+        group: ""
+        mode: watch          # Phase F: watch K8s events API for KUBERNETES_EVENT ingestion
+
+processors:
+  memory_limiter:
+    limit_mib: 400
+    spike_limit_mib: 100
+    check_interval: 5s
+
+  # Stamps k8s.cluster.name and k8s.cluster.uid from OTEL_RESOURCE_ATTRIBUTES env var.
+  resourcedetection:
+    detectors: [env]
+    timeout: 2s
+    override: false
+
+  # Enriches k8s_cluster container metrics with workload owner names (deployment,
+  # daemonset, etc.) by looking up the pod by k8s.pod.uid in the k8s API.
+  # Required because k8sclusterreceiver does not include owner references on
+  # container-level resources — only pod-level resources carry them natively.
+  k8sattributes:
+    auth_type: serviceAccount
+    passthrough: false
+    extract:
+      metadata:
+        - k8s.deployment.name
+        - k8s.statefulset.name
+        - k8s.daemonset.name
+        - k8s.replicaset.name
+        - k8s.job.name
+        - k8s.cronjob.name
+    pod_association:
+      - sources:
+          - from: resource_attribute
+            name: k8s.pod.uid
+
+  # Splits a shared ResourceLogs into one ResourceLogs per distinct k8s.pod.uid
+  # value before k8sattributes runs. k8sobjects pull mode batches all pods in a
+  # namespace into a single ResourceLogs; transform/topology writes per-pod
+  # attributes to the shared resource, leaving only the last pod's UID.
+  # groupbyattrs/pod reads the per-record k8s.pod.uid attribute (set by
+  # transform/topology on log record attributes) and promotes it to a fresh
+  # per-pod resource so k8sattributes resolves the correct workload metadata.
+  # Non-pod records (no k8s.pod.uid) are collected into a separate resource and
+  # pass through unchanged.
+  groupbyattrs/pod:
+    keys: [k8s.pod.uid]
+
+  # Derives k8s.workload.name / k8s.workload.kind from the kind-specific resource
+  # attribute emitted by k8sclusterreceiver (e.g. k8s.deployment.name → workload.name).
+  # log_statements promote workload names from resource.attributes (set by k8sattributes
+  # on pod records) into log record attributes for OpenPipeline entity resolution.
+  transform/workload_dims:
+    metric_statements:
+      - context: resource
+        statements:
+          # Cluster identity — stamped from env vars set in the K8s Deployment manifest.
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}")
+          - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where attributes["k8s.deployment.name"] != nil
+          - set(attributes["k8s.workload.kind"], "deployment") where attributes["k8s.deployment.name"] != nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "statefulset") where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "cronjob") where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "daemonset") where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where attributes["k8s.job.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "job") where attributes["k8s.job.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "replicaset") where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.kind"] == nil
+    log_statements:
+      - context: log
+        statements:
+          # Promote workload names from resource.attributes (written by k8sattributes on pod
+          # records) into log record attributes so OpenPipeline entity matchers can read them.
+          - set(attributes["k8s.deployment.name"], resource.attributes["k8s.deployment.name"]) where resource.attributes["k8s.deployment.name"] != nil
+          - set(attributes["k8s.statefulset.name"], resource.attributes["k8s.statefulset.name"]) where resource.attributes["k8s.statefulset.name"] != nil
+          - set(attributes["k8s.daemonset.name"], resource.attributes["k8s.daemonset.name"]) where resource.attributes["k8s.daemonset.name"] != nil
+          - set(attributes["k8s.replicaset.name"], resource.attributes["k8s.replicaset.name"]) where resource.attributes["k8s.replicaset.name"] != nil
+          - set(attributes["k8s.job.name"], resource.attributes["k8s.job.name"]) where resource.attributes["k8s.job.name"] != nil
+          - set(attributes["k8s.cronjob.name"], resource.attributes["k8s.cronjob.name"]) where resource.attributes["k8s.cronjob.name"] != nil
+          # Workload name/kind cascade — same priority order as metric_statements.
+          # For workload records (deployment etc.) k8s.workload.name is already set by
+          # transform/topology so these are no-ops; they only fire on pod records.
+          - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where attributes["k8s.deployment.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "deployment") where attributes["k8s.deployment.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "statefulset") where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "cronjob") where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "daemonset") where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where attributes["k8s.job.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "job") where attributes["k8s.job.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "replicaset") where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.kind"] == nil
+
+  batch:
+    timeout: 10s
+    send_batch_size: 1000
+
+  # Phase 1: maps k8sobjects/topology pull-mode records to KUBERNETES_OTEL_TOPO topology
+  # events via stock OTTL.  Each record's body IS the K8s object (no {type,object} wrapper).
+  # resource context stamps cluster identity; log context sets per-kind topology attrs,
+  # k8s.object (full JSON), and resource.attributes["k8s.pod.uid"] for k8sattributes.
+  transform/topology:
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}")
+      - context: log
+        statements:
+          # Common topology fields on every record.
+          - set(attributes["event.provider"], "KUBERNETES_OTEL_TOPO")
+          - set(attributes["event.kind"], "topology_node")
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}")
+          - set(attributes["k8s.object"], String(body))
+          # Namespace
+          - set(attributes["k8s.topo.node.type"], "K8S_NAMESPACE") where attributes["k8s.resource.name"] == "namespaces"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "namespaces"
+          - set(attributes["k8s.namespace.uid"], body["metadata"]["uid"]) where attributes["k8s.resource.name"] == "namespaces"
+          # Node
+          - set(attributes["k8s.topo.node.type"], "K8S_NODE") where attributes["k8s.resource.name"] == "nodes"
+          - set(attributes["k8s.node.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "nodes"
+          - set(attributes["k8s.node.uid"], body["metadata"]["uid"]) where attributes["k8s.resource.name"] == "nodes"
+          - set(attributes["k8s.node.system_uuid"], body["status"]["nodeInfo"]["systemUUID"]) where attributes["k8s.resource.name"] == "nodes" and body["status"]["nodeInfo"]["systemUUID"] != nil
+          # Pod — workload attrs filled in later by k8sattributes + transform/workload_dims.
+          - set(attributes["k8s.topo.node.type"], "K8S_POD") where attributes["k8s.resource.name"] == "pods"
+          - set(attributes["k8s.pod.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "pods"
+          - set(attributes["k8s.pod.uid"], body["metadata"]["uid"]) where attributes["k8s.resource.name"] == "pods"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "pods" and body["metadata"]["namespace"] != nil
+          - set(attributes["k8s.pod.phase"], body["status"]["phase"]) where attributes["k8s.resource.name"] == "pods" and body["status"]["phase"] != nil
+          - set(attributes["k8s.node.name"], body["spec"]["nodeName"]) where attributes["k8s.resource.name"] == "pods" and body["spec"]["nodeName"] != nil
+          # Deployment
+          - set(attributes["k8s.topo.node.type"], "K8S_DEPLOYMENT") where attributes["k8s.resource.name"] == "deployments"
+          - set(attributes["k8s.deployment.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "deployments"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "deployments"
+          - set(attributes["k8s.workload.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "deployments"
+          - set(attributes["k8s.workload.kind"], "deployment") where attributes["k8s.resource.name"] == "deployments"
+          # StatefulSet
+          - set(attributes["k8s.topo.node.type"], "K8S_STATEFULSET") where attributes["k8s.resource.name"] == "statefulsets"
+          - set(attributes["k8s.statefulset.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "statefulsets"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "statefulsets"
+          - set(attributes["k8s.workload.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "statefulsets"
+          - set(attributes["k8s.workload.kind"], "statefulset") where attributes["k8s.resource.name"] == "statefulsets"
+          # DaemonSet
+          - set(attributes["k8s.topo.node.type"], "K8S_DAEMONSET") where attributes["k8s.resource.name"] == "daemonsets"
+          - set(attributes["k8s.daemonset.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "daemonsets"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "daemonsets"
+          - set(attributes["k8s.workload.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "daemonsets"
+          - set(attributes["k8s.workload.kind"], "daemonset") where attributes["k8s.resource.name"] == "daemonsets"
+          # ReplicaSet
+          - set(attributes["k8s.topo.node.type"], "K8S_REPLICASET") where attributes["k8s.resource.name"] == "replicasets"
+          - set(attributes["k8s.replicaset.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "replicasets"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "replicasets"
+          - set(attributes["k8s.workload.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "replicasets"
+          - set(attributes["k8s.workload.kind"], "replicaset") where attributes["k8s.resource.name"] == "replicasets"
+          # Service
+          - set(attributes["k8s.topo.node.type"], "K8S_SERVICE") where attributes["k8s.resource.name"] == "services"
+          - set(attributes["k8s.service.name"], body["metadata"]["name"]) where attributes["k8s.resource.name"] == "services"
+          - set(attributes["k8s.namespace.name"], body["metadata"]["namespace"]) where attributes["k8s.resource.name"] == "services"
+
+  # Phase 2: container fan-out only — emits one CONTAINER record per
+  # containers[]/initContainers[] element enriched with k8s.container.image.
+  # All other entity types are handled by transform/topology + k8sattributes upstream.
+  dtk8stopology:
+    cluster_name: "${env:K8S_CLUSTER_NAME}"
+    cluster_uid: "${env:K8S_CLUSTER_UID}"
+
+  # Phase 3: K8s Event watch records → KUBERNETES_EVENT Davis event attrs via OTTL.
+  # Watch mode: body = {type, object: <Event>}. All statements gate on k8s.resource.name
+  # == "events" and body["type"] != "DELETED". dtk8seventsprocessor (below) then
+  # applies throttle and passes records through; pod records are routed to OOM fan-out.
+  transform/k8sevents:
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}")
+      - context: log
+        statements:
+          - set(attributes["event.provider"], "KUBERNETES_EVENT") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["event.kind"], "DAVIS_EVENT") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["event.type"], "CUSTOM_INFO") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["event.status"], "CLOSED") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["dt.davis.is_merging_allowed"], false) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["dt.kubernetes.event.uid"], body["object"]["metadata"]["uid"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["metadata"]["uid"] != nil
+          - set(attributes["dt.kubernetes.event.reason"], body["object"]["reason"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["reason"] != nil
+          - set(attributes["event.group_label"], body["object"]["reason"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["reason"] != nil
+          - set(attributes["dt.kubernetes.event.message"], body["object"]["message"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["message"] != nil
+          - set(attributes["event.category"], "ERROR") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["type"] == "Warning"
+          - set(attributes["event.category"], "INFO") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["type"] != "Warning"
+          - set(attributes["dt.kubernetes.event.involved_object.kind"], body["object"]["involvedObject"]["kind"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["involvedObject"]["kind"] != nil
+          - set(attributes["dt.kubernetes.event.involved_object.name"], body["object"]["involvedObject"]["name"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["involvedObject"]["name"] != nil
+          - set(attributes["k8s.namespace.name"], body["object"]["involvedObject"]["namespace"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["involvedObject"]["namespace"] != nil
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}") where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED"
+          - set(attributes["dt.kubernetes.event.count"], body["object"]["count"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["count"] != nil
+          - set(attributes["dt.kubernetes.event.first_seen"], body["object"]["firstTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["firstTimestamp"] != nil
+          - set(attributes["dt.kubernetes.event.last_seen"], body["object"]["lastTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["lastTimestamp"] != nil
+          - set(attributes["event.start"], body["object"]["lastTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["lastTimestamp"] != nil
+          - set(attributes["event.end"], body["object"]["lastTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["lastTimestamp"] != nil
+
+  # Phase 3: throttles KUBERNETES_EVENT records (mapped by transform/k8sevents) and
+  # fans out OOM-kill Pod MODIFIED watch events → KUBERNETES_INFERRED_EVENT.
+  # UID dedup dropped (Davis deduplicates events natively).
+  dtk8seventsprocessor:
+    cluster_name: "${env:K8S_CLUSTER_NAME}"
+    cluster_uid: "${env:K8S_CLUSTER_UID}"
+    max_events_per_entity_per_hour: 1000
+    max_events_per_cluster_per_hour: 10000
+
+connectors:
+  # Phase G: MetricsToLogs connector — evaluates anomaly-detection rules
+  # against incoming metric data points and emits KUBERNETES_ANOMALY_DETECTION
+  # Davis event log records when value × time thresholds fire.
+  alertingengine:
+    window_size_seconds: 60
+    grace_period_seconds: 0
+    rules:
+      - id: container_crash_loop
+        metric_key: k8s.container.restarts
+        group_by: [k8s.cluster.uid, k8s.namespace.name, k8s.workload.name, k8s.container.name]
+        aggregation: max
+        threshold: {operator: ">", value: 5}
+        time_trigger_count: 2
+        event_type: AVAILABILITY_EVENT
+        event_name: "Container crash loop detected"
+        event_description: "Container {{k8s.container.name}} restarted {{value}} times in the last {{window}}s"
+
+      - id: node_not_ready
+        metric_key: k8s.node.condition_ready
+        group_by: [k8s.cluster.uid, k8s.node.name]
+        aggregation: min
+        threshold: {operator: "<", value: 1}
+        time_trigger_count: 2
+        event_type: AVAILABILITY_EVENT
+        event_name: "Node not ready"
+        event_description: "Node {{k8s.node.name}} has been not-ready for {{window}}s"
+
+      - id: deployment_unavailable
+        metric_key: k8s.deployment.available
+        group_by: [k8s.cluster.uid, k8s.namespace.name, k8s.deployment.name]
+        aggregation: min
+        threshold: {operator: "<", value: 1}
+        time_trigger_count: 3
+        event_type: AVAILABILITY_EVENT
+        event_name: "Deployment has no available replicas"
+        event_description: "Deployment {{k8s.deployment.name}} in {{k8s.namespace.name}} has 0 available replicas"
+
+      - id: daemonset_misscheduled
+        metric_key: k8s.daemonset.misscheduled_nodes
+        group_by: [k8s.cluster.uid, k8s.namespace.name, k8s.daemonset.name]
+        aggregation: max
+        threshold: {operator: ">", value: 0}
+        time_trigger_count: 2
+        event_type: ERROR_EVENT
+        event_name: "DaemonSet has misscheduled pods"
+        event_description: "DaemonSet {{k8s.daemonset.name}} has {{value}} misscheduled pods"
+
+exporters:
+  # Metrics: classic API token (metrics.ingest scope).
+  otlphttp/metrics:
+    endpoint: "${DT_ENDPOINT}"
+    headers:
+      Authorization: "Api-Token ${DT_API_TOKEN}"
+
+  # Logs/topology events: platform token (storage:logs:write scope).
+  otlphttp/logs:
+    endpoint: "${DT_ENDPOINT}"
+    headers:
+      Authorization: "Api-Token ${DT_PLATFORM_TOKEN}"
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [k8s_cluster]
+      processors: [memory_limiter, resourcedetection, k8sattributes, transform/workload_dims, batch]
+      exporters: [otlphttp/metrics, debug, alertingengine]
+
+    # Topology pipeline: stock OTTL maps raw k8sobjects → KUBERNETES_OTEL_TOPO attrs;
+    # k8sattributes resolves pod→workload; workload_dims promotes to record attrs;
+    # dtk8stopology fans out pod records into CONTAINER records with image enrichment.
+    logs/topology:
+      receivers: [k8s_objects/topology]
+      processors: [memory_limiter, transform/topology, groupbyattrs/pod, k8sattributes, transform/workload_dims, dtk8stopology, batch]
+      exporters: [otlphttp/logs, debug]
+
+    # Events pipeline: transform/k8sevents maps K8s Event objects → KUBERNETES_EVENT attrs;
+    # dtk8seventsprocessor applies per-entity/cluster throttle and fans out OOM kills.
+    logs/events:
+      receivers: [k8s_objects/events]
+      processors: [memory_limiter, transform/k8sevents, dtk8seventsprocessor, batch]
+      exporters: [otlphttp/logs, debug]
+
+    # Phase G alerting pipeline — KUBERNETES_ANOMALY_DETECTION events from connector.
+    logs/alerts:
+      receivers: [alertingengine]
+      processors: [batch]
+      exporters: [otlphttp/logs, debug]

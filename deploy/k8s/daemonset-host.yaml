@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dt-otelcol-host
+  namespace: dt-otelcol
+  labels:
+    app: dt-otelcol-host
+spec:
+  selector:
+    matchLabels:
+      app: dt-otelcol-host
+  template:
+    metadata:
+      labels:
+        app: dt-otelcol-host
+    spec:
+      serviceAccountName: dt-otelcol
+      # Required so hostmetrics sees the real host network namespace and journald
+      # can correlate logs to the host. hostPID is required so the `process`
+      # scraper can enumerate every process on the node, not just the collector's
+      # own PID namespace.
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: collector
+          image: ${HOST_COLLECTOR_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          args:
+            - "--config=/conf/host.yaml"
+          securityContext:
+            # journald access requires root or systemd-journal group membership,
+            # and process.disk.io requires privileged access to read /proc/<pid>/io.
+            runAsUser: 0
+            privileged: true
+          env:
+            - name: DT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dt-otelcol-secret
+                  key: api-token
+            - name: DT_PLATFORM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dt-otelcol-secret
+                  key: platform-token
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DT_ENDPOINT
+              value: "${DT_ENDPOINT}"
+            - name: K8S_CLUSTER_NAME
+              value: "${K8S_CLUSTER_NAME}"
+            - name: K8S_CLUSTER_UID
+              value: "${K8S_CLUSTER_UID}"
+            # Tell gopsutil (used by hostmetrics + resourcedetection/system) to
+            # read host data from the hostfs mount instead of the container's
+            # own filesystem. Without these, every pod reports the same
+            # container-generated /etc/machine-id as host.id.
+            - name: HOST_PROC
+              value: /hostfs/proc
+            - name: HOST_SYS
+              value: /hostfs/sys
+            - name: HOST_ETC
+              value: /hostfs/etc
+            - name: HOST_VAR
+              value: /hostfs/var
+            - name: HOST_RUN
+              value: /hostfs/run
+            - name: HOST_DEV
+              value: /hostfs/dev
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
+            - name: journal
+              mountPath: /var/log/journal
+              readOnly: true
+            # The OTel SDK's host.id reader hardcodes /etc/machine-id and
+            # ignores HOST_ETC, so we bind-mount the host's file over the
+            # container's image-baked one. Without this, every pod reports
+            # the same image-layer machine-id and DT sees a single host
+            # entity for the entire cluster.
+            - name: etc-machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: dt-otelcol-host-config
+        - name: hostfs
+          hostPath:
+            path: /
+        - name: journal
+          # GKE Container-Optimized OS keeps the persistent journal here
+          # (the documented in-memory /run/log/journal path is empty on COS).
+          hostPath:
+            path: /var/log/journal
+        - name: etc-machine-id
+          hostPath:
+            path: /etc/machine-id
+            type: File
+      tolerations:
+        # Run on every node, including control-plane and tainted nodes.
+        - operator: Exists

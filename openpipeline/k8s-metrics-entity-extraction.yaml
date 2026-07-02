@@ -1,0 +1,419 @@
+# OpenPipeline metric pipeline — entity extraction + enrichment for OTel k8s.* metrics
+#
+# Extends k8s-metrics-entity-enrichment.yaml by also CREATING Smartscape entities
+# and edges directly from incoming metric data points (extractNode: true).
+#
+# Use this pipeline when no separate topology log pipeline is available, or to
+# provide additional coverage between topology pull cycles (120s).  The log-based
+# topology pipeline writes richer entity properties (k8s.object, k8s.pod.phase,
+# k8s.node.system_uuid, k8s.container.image); this pipeline writes the subset of
+# properties that are present on metric data points after k8sattributes and
+# transform/workload_dims have run.
+#
+# idComponents are identical to k8s-topology-combined-pipeline.yaml so metric-
+# extracted entities resolve to the same Smartscape IDs as log-extracted ones.
+# Smartscape uses last-write-wins semantics; after the bug fix (groupbyattrs
+# before k8sattributes) pod workload properties written here are correct.
+#
+# Toggle via Makefile: make apply-openpipeline METRICS_EXTRACT=true
+# Apply: dtctl apply -f openpipeline/k8s-metrics-entity-extraction.yaml
+
+---
+type: setting
+schemaId: builtin:openpipeline.metrics.pipelines
+scope: environment
+objectId: "vu9U3hXa3q0AAAABACZidWlsdGluOm9wZW5waXBlbGluZS5tZXRyaWNzLnBpcGVsaW5lcwAGdGVuYW50AAZ0ZW5hbnQAJGFhOTkwNDc1LWM2ZmYtMzNmNC04Y2I2LTRjN2M1N2IyNjI3M77vVN4V2t6t"
+value:
+  customId: k8s-otel-metrics-entity-extraction
+  displayName: "K8s OTel Metrics: Entity Extraction + Enrichment"
+  metadataList: []
+  smartscapeNodeExtraction:
+    processors:
+      # ── 1. CLUSTER ─────────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-cluster
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_CLUSTER from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_CLUSTER
+          nodeIdFieldName: dt.smartscape.custom_k8s_cluster
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.cluster.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+          staticEdgesToExtract: []
+
+      # ── 2. NAMESPACE ───────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-namespace
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_NAMESPACE from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_NAMESPACE
+          nodeIdFieldName: dt.smartscape.custom_k8s_namespace
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.namespace.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.cluster.uid
+              referencedFieldName: k8s.cluster.uid
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+
+      # ── 3. NODE ────────────────────────────────────────────────────────────
+      # Note: k8s.node.system_uuid is not present on metric data points and is omitted.
+      - type: smartscapeNode
+        id: extract-k8s-node
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_NODE from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.node.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_NODE
+          nodeIdFieldName: dt.smartscape.custom_k8s_node
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: node_name
+              referencedFieldName: k8s.node.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.node.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.cluster.uid
+              referencedFieldName: k8s.cluster.uid
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+
+      # ── 4. DEPLOYMENT ──────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-deployment
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_DEPLOYMENT from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name) and isNotNull(k8s.deployment.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_DEPLOYMENT
+          nodeIdFieldName: dt.smartscape.custom_k8s_deployment
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+            - idComponent: deployment_name
+              referencedFieldName: k8s.deployment.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.deployment.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+
+      # ── 5. DAEMONSET ───────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-daemonset
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_DAEMONSET from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name) and isNotNull(k8s.daemonset.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_DAEMONSET
+          nodeIdFieldName: dt.smartscape.custom_k8s_daemonset
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+            - idComponent: daemonset_name
+              referencedFieldName: k8s.daemonset.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.daemonset.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+
+      # ── 6. STATEFULSET ─────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-statefulset
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_STATEFULSET from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name) and isNotNull(k8s.statefulset.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_STATEFULSET
+          nodeIdFieldName: dt.smartscape.custom_k8s_statefulset
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+            - idComponent: statefulset_name
+              referencedFieldName: k8s.statefulset.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.statefulset.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+
+      # ── 7. REPLICASET ──────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-replicaset
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_REPLICASET from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name) and isNotNull(k8s.replicaset.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_REPLICASET
+          nodeIdFieldName: dt.smartscape.custom_k8s_replicaset
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+            - idComponent: replicaset_name
+              referencedFieldName: k8s.replicaset.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.replicaset.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+
+      # ── 8. POD ─────────────────────────────────────────────────────────────
+      # Runs after workload processors so dt.smartscape.custom_k8s_<workload>
+      # is already written. is_part_of edges: only the workload whose
+      # dt.smartscape.* field is non-null produces an edge; others are no-ops.
+      # Note: k8s.pod.phase and k8s.object are not present on metric data points.
+      - type: smartscapeNode
+        id: extract-k8s-pod
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_POD from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.pod.uid)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_POD
+          nodeIdFieldName: dt.smartscape.custom_k8s_pod
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: pod_uid
+              referencedFieldName: k8s.pod.uid
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.pod.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+            - fieldName: k8s.node.name
+              referencedFieldName: k8s.node.name
+              strategy: equals
+            - fieldName: k8s.workload.name
+              referencedFieldName: k8s.workload.name
+              strategy: equals
+            - fieldName: k8s.workload.kind
+              referencedFieldName: k8s.workload.kind
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+            - edgeType: runs_on
+              targetType: CUSTOM_K8S_NODE
+              targetIdFieldName: dt.smartscape.custom_k8s_node
+            - edgeType: is_part_of
+              targetType: CUSTOM_K8S_DEPLOYMENT
+              targetIdFieldName: dt.smartscape.custom_k8s_deployment
+            - edgeType: is_part_of
+              targetType: CUSTOM_K8S_STATEFULSET
+              targetIdFieldName: dt.smartscape.custom_k8s_statefulset
+            - edgeType: is_part_of
+              targetType: CUSTOM_K8S_DAEMONSET
+              targetIdFieldName: dt.smartscape.custom_k8s_daemonset
+            - edgeType: is_part_of
+              targetType: CUSTOM_K8S_REPLICASET
+              targetIdFieldName: dt.smartscape.custom_k8s_replicaset
+
+      # ── 9. CONTAINER ───────────────────────────────────────────────────────
+      # Runs after pod so dt.smartscape.custom_k8s_pod is already written.
+      # k8s.container.image is present only on kubeletstats/cAdvisor container
+      # metrics; if absent on a given data point the field is simply not written.
+      - type: smartscapeNode
+        id: extract-custom-container
+        enabled: true
+        description: "Extract/enrich CUSTOM_CONTAINER from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.pod.uid) and isNotNull(k8s.container.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_CONTAINER
+          nodeIdFieldName: dt.smartscape.custom_container
+          extractNode: true
+          idComponents:
+            - idComponent: pod_uid
+              referencedFieldName: k8s.pod.uid
+            - idComponent: container_name
+              referencedFieldName: k8s.container.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.container.name
+          fieldsToExtract:
+            - fieldName: k8s.container.name
+              referencedFieldName: k8s.container.name
+              strategy: equals
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+            - fieldName: k8s.pod.name
+              referencedFieldName: k8s.pod.name
+              strategy: equals
+            - fieldName: k8s.node.name
+              referencedFieldName: k8s.node.name
+              strategy: equals
+            - fieldName: k8s.workload.name
+              referencedFieldName: k8s.workload.name
+              strategy: equals
+            - fieldName: k8s.workload.kind
+              referencedFieldName: k8s.workload.kind
+              strategy: equals
+            - fieldName: k8s.container.image
+              referencedFieldName: k8s.container.image
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: is_part_of
+              targetType: CUSTOM_K8S_POD
+              targetIdFieldName: dt.smartscape.custom_k8s_pod
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace
+            - edgeType: runs_on
+              targetType: CUSTOM_K8S_NODE
+              targetIdFieldName: dt.smartscape.custom_k8s_node
+
+      # ── 10. SERVICE ────────────────────────────────────────────────────────
+      - type: smartscapeNode
+        id: extract-k8s-service
+        enabled: true
+        description: "Extract/enrich CUSTOM_K8S_SERVICE from metrics"
+        matcher: 'isNotNull(k8s.cluster.uid) and isNotNull(k8s.namespace.name) and isNotNull(k8s.service.name)'
+        smartscapeNode:
+          nodeType: CUSTOM_K8S_SERVICE
+          nodeIdFieldName: dt.smartscape.custom_k8s_service
+          extractNode: true
+          idComponents:
+            - idComponent: cluster_uid
+              referencedFieldName: k8s.cluster.uid
+            - idComponent: namespace_name
+              referencedFieldName: k8s.namespace.name
+            - idComponent: service_name
+              referencedFieldName: k8s.service.name
+          nodeName:
+            type: field
+            field:
+              sourceFieldName: k8s.service.name
+          fieldsToExtract:
+            - fieldName: k8s.cluster.name
+              referencedFieldName: k8s.cluster.name
+              strategy: equals
+            - fieldName: k8s.namespace.name
+              referencedFieldName: k8s.namespace.name
+              strategy: equals
+          staticEdgesToExtract:
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_CLUSTER
+              targetIdFieldName: dt.smartscape.custom_k8s_cluster
+            - edgeType: belongs_to
+              targetType: CUSTOM_K8S_NAMESPACE
+              targetIdFieldName: dt.smartscape.custom_k8s_namespace

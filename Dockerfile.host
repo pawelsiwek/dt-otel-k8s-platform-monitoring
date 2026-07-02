@@ -1,0 +1,18 @@
+# Image variant for the dt-otelcol-host DaemonSet.
+#
+# The journald receiver shells out to `journalctl`, which is not present in
+# the distroless image used for other dt-otelcol-k8s components. We base on
+# debian-slim and install the systemd package solely for the journalctl binary.
+#
+# Runs as root (UID 0) because journald access requires either root or membership
+# in the systemd-journal group, and Kubernetes container isolation prevents
+# group-based access from being reliable across distros.
+FROM debian:12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends systemd ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY dist/dtotelcol /dtotelcol
+
+ENTRYPOINT ["/dtotelcol"]

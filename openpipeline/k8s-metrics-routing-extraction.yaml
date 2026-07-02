@@ -1,0 +1,27 @@
+# OpenPipeline metrics routing — extraction+enrichment mode
+#
+# Routes OTel k8s.* metrics to the entity EXTRACTION pipeline which both
+# creates Smartscape nodes/edges AND enriches metric data points with
+# dt.smartscape.* IDs.
+#
+# This file is applied when METRICS_EXTRACT=true via:
+#   make apply-openpipeline METRICS_EXTRACT=true
+#
+# To revert to enrichment-only mode:
+#   make apply-openpipeline
+#
+# Note: objectId is the same as k8s-metrics-routing.yaml so applying this
+# file replaces the routing entry in-place. pipelineId points to the
+# extraction pipeline; it is filled in after the first dtctl apply of
+# k8s-metrics-entity-extraction.yaml assigns the objectId.
+type: setting
+schemaId: builtin:openpipeline.metrics.routing
+scope: environment
+objectId: "vu9U3hXa3q0AAAABACRidWlsdGluOm9wZW5waXBlbGluZS5tZXRyaWNzLnJvdXRpbmcABnRlbmFudAAGdGVuYW50ACRlYTdhMzgyYy1jYTA3LTM2YTQtOGE4ZC0zOTFhMTk0YzQwNzO-71TeFdrerQ"
+value:
+  routingEntries:
+    - description: "Route OTel k8s metrics through entity extraction pipeline"
+      enabled: true
+      matcher: 'isNotNull(k8s.cluster.uid)'
+      pipelineType: custom
+      pipelineId: "vu9U3hXa3q0AAAABACZidWlsdGluOm9wZW5waXBlbGluZS5tZXRyaWNzLnBpcGVsaW5lcwAGdGVuYW50AAZ0ZW5hbnQAJGFhOTkwNDc1LWM2ZmYtMzNmNC04Y2I2LTRjN2M1N2IyNjI3M77vVN4V2t6t"

@@ -1,0 +1,14 @@
+dist/
+*.hprof
+*.log
+.DS_Store
+.idea/
+
+# Secrets / credentials — never commit these
+.env
+.env.*
+*.key
+*.pem
+*.token
+credentials
+*-sa.json

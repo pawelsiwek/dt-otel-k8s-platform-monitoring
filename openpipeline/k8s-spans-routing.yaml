@@ -1,0 +1,23 @@
+# OpenPipeline spans routing — routes k8s-enriched spans to the entity extraction pipeline
+#
+# Sends any span that carries k8s.cluster.uid (set by the k8sattributes processor
+# or by instrumentation agents) to the k8s entity extraction pipeline.
+#
+# This objectId is the pre-existing spans routing singleton for this DT environment.
+# pipelineId is filled in after the extraction pipeline is applied and its objectId
+# is assigned by DT.
+#
+# Apply: dtctl apply -f openpipeline/k8s-spans-routing.yaml --plain
+
+---
+type: setting
+schemaId: builtin:openpipeline.spans.routing
+scope: environment
+objectId: "vu9U3hXa3q0AAAABACJidWlsdGluOm9wZW5waXBlbGluZS5zcGFucy5yb3V0aW5nAAZ0ZW5hbnQABnRlbmFudAAkNWIyOGY3ZjQtOTNlMC0zZGY1LTllYWQtNGY3ODQzNDcwMzEwvu9U3hXa3q0"
+value:
+  routingEntries:
+    - description: "Route OTel k8s spans through entity extraction pipeline"
+      enabled: true
+      matcher: 'isNotNull(k8s.cluster.uid)'
+      pipelineType: custom
+      pipelineId: "vu9U3hXa3q0AAAABACRidWlsdGluOm9wZW5waXBlbGluZS5zcGFucy5waXBlbGluZXMABnRlbmFudAAGdGVuYW50ACQ1YmNlNDQ0Mi01ZjFkLTM0ZWQtYWZlMy0zNGJlNDM1MmYyZDi-71TeFdrerQ"

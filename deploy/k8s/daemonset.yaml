@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dt-otelcol-agent
+  namespace: dt-otelcol
+  labels:
+    app: dt-otelcol-agent
+spec:
+  selector:
+    matchLabels:
+      app: dt-otelcol-agent
+  template:
+    metadata:
+      labels:
+        app: dt-otelcol-agent
+    spec:
+      serviceAccountName: dt-otelcol
+      hostNetwork: false
+      containers:
+        - name: collector
+          image: ${COLLECTOR_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          args:
+            - "--config=/conf/daemonset.yaml"
+          env:
+            - name: DT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dt-otelcol-secret
+                  key: api-token
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DT_ENDPOINT
+              value: "${DT_ENDPOINT}"
+            - name: K8S_CLUSTER_NAME
+              value: "${K8S_CLUSTER_NAME}"
+            - name: K8S_CLUSTER_UID
+              value: "${K8S_CLUSTER_UID}"
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: dt-otelcol-daemonset-config

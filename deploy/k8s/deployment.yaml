@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-otelcol
+  namespace: dt-otelcol
+  labels:
+    app: dt-otelcol
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dt-otelcol
+  template:
+    metadata:
+      labels:
+        app: dt-otelcol
+    spec:
+      serviceAccountName: dt-otelcol
+      containers:
+        - name: collector
+          image: ${COLLECTOR_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          args:
+            - "--config=/conf/deployment.yaml"
+          env:
+            - name: DT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dt-otelcol-secret
+                  key: api-token
+            - name: DT_PLATFORM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dt-otelcol-secret
+                  key: platform-token
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.cluster.name=${K8S_CLUSTER_NAME},k8s.cluster.uid=${K8S_CLUSTER_UID}"
+            - name: K8S_CLUSTER_NAME
+              value: "${K8S_CLUSTER_NAME}"
+            - name: K8S_CLUSTER_UID
+              value: "${K8S_CLUSTER_UID}"
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: dt-otelcol-config

@@ -1,0 +1,32 @@
+# Phase G: OpenPipeline routing rule for KUBERNETES_ANOMALY_DETECTION events.
+#
+# Routes log records with event.provider == "KUBERNETES_ANOMALY_DETECTION"
+# to the default Davis events pipeline so they appear as DAVIS_EVENT entries
+# accessible via `fetch events | filter event.kind == "DAVIS_EVENT"`.
+#
+# Apply via:
+#   dtctl settings put --schema builtin:openpipeline.logs.routing \
+#       --scope environment --file openpipeline/kubernetes-anomaly-detection-routing.yaml
+#
+# Note: insert this routing entry BEFORE the existing KUBERNETES_OTEL_TOPO
+# rule, or give it a higher priority, so anomaly-detection events are not
+# accidentally captured by a catch-all rule.
+type: setting
+schemaId: builtin:openpipeline.logs.routing
+scope: environment
+value:
+  routingEntries:
+    # Route KUBERNETES_EVENT / KUBERNETES_INFERRED_EVENT to the events-metric pipeline
+    # so kubernetes.events counter metric is extracted. Records stay in logs store.
+    - description: "Route K8s event provider logs to events-metric extraction pipeline"
+      enabled: true
+      matcher: 'event.provider == "KUBERNETES_EVENT" or event.provider == "KUBERNETES_INFERRED_EVENT"'
+      pipelineType: custom
+      pipelineId: "vu9U3hXa3q0AAAABACNidWlsdGluOm9wZW5waXBlbGluZS5sb2dzLnBpcGVsaW5lcwAGdGVuYW50AAZ0ZW5hbnQAJDJhNWNkZDdlLWMwMzYtMzAxYi05OGQwLTFhM2VjMWZlZWQ3NL7vVN4V2t6t"
+    # KUBERNETES_ANOMALY_DETECTION stays in default logs pipeline (accessible via fetch logs).
+    # A separate davis-event extraction stage can be added once the event format is validated.
+    - description: "Route KUBERNETES_OTEL_TOPO events to K8s topology pipeline"
+      enabled: true
+      matcher: 'event.provider == "KUBERNETES_OTEL_TOPO"'
+      pipelineType: custom
+      pipelineId: "vu9U3hXa3q0AAAABACNidWlsdGluOm9wZW5waXBlbGluZS5sb2dzLnBpcGVsaW5lcwAGdGVuYW50AAZ0ZW5hbnQAJDkwYTdhNjAyLWM0YmMtMzYwZC1hODFhLWQxY2M2MDY2YTE3OL7vVN4V2t6t"

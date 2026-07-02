@@ -1,0 +1,10 @@
+type: setting
+schemaId: builtin:openpipeline.logs.routing
+scope: environment
+value:
+  routingEntries:
+    - description: "Route KUBERNETES_OTEL_TOPO events to K8s topology pipeline"
+      enabled: true
+      matcher: 'event.provider == "KUBERNETES_OTEL_TOPO"'
+      pipelineType: custom
+      pipelineId: "vu9U3hXa3q0AAAABACNidWlsdGluOm9wZW5waXBlbGluZS5sb2dzLnBpcGVsaW5lcwAGdGVuYW50AAZ0ZW5hbnQAJDkwYTdhNjAyLWM0YmMtMzYwZC1hODFhLWQxY2M2MDY2YTE3OL7vVN4V2t6t"

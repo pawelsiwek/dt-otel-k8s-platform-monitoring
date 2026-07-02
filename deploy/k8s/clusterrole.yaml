@@ -1,0 +1,67 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dt-otelcol
+rules:
+  # kubeletstatsreceiver — needs nodes/stats and nodes/proxy
+  - apiGroups: [""]
+    resources:
+      - nodes/stats
+      - nodes/proxy
+      - nodes/metrics
+    verbs: [get]
+  # k8sclusterreceiver
+  - apiGroups: [""]
+    resources:
+      - events
+      - namespaces
+      - namespaces/status
+      - nodes
+      - nodes/spec
+      - pods
+      - pods/status
+      - replicationcontrollers
+      - replicationcontrollers/status
+      - resourcequotas
+      - services
+      - persistentvolumes
+      - persistentvolumeclaims
+      - endpoints
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources:
+      - cronjobs
+      - jobs
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources:
+      - horizontalpodautoscalers
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources:
+      - ingresses
+    verbs: [get, list, watch]
+  # k8sobjectsreceiver — topology events (phase D) and K8s event ingestion (phase F).
+  # events:watch is already covered by the k8sclusterreceiver rule above; listed
+  # here explicitly for audit clarity.
+  - apiGroups: [""]
+    resources:
+      - events
+      - services
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
