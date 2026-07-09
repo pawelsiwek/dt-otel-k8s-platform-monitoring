@@ -3,6 +3,10 @@ HOST_COLLECTOR_IMAGE ?= dt-otelcol-k8s-host:latest
 KIND_CLUSTER         ?= dt-otelcol-smoke
 KIND                 ?= $(HOME)/go/bin/kind
 OCB                  ?= $(HOME)/go/bin/builder
+EXT_VERSION          ?= 1.0.2
+EXT_ZIP              ?= dist/extension/custom.dt-k8s-otel-topology-$(EXT_VERSION).zip
+EXT_BUNDLE           ?= dist/extension/bundle-$(EXT_VERSION).zip
+EXT_CERTS            ?= extension/certs
 # Pin the Go toolchain used for the build. go.mod requires >= 1.25.0, but the
 # 1.22.x–1.25.x linkers hit a generics "relocation target not defined" bug when
 # linking pkg/ottl into filterprocessor. Fixed in 1.26.0. GOTOOLCHAIN=auto would
@@ -13,6 +17,7 @@ IMAGE_PULL_POLICY    ?= IfNotPresent
 K8S_CLUSTER_NAME     ?=
 K8S_CLUSTER_UID      ?=
 DT_ENDPOINT          ?=
+DT_TENANT_URL        ?=
 KUBECTL_FLAGS        ?=
 METRICS_EXTRACT      ?= false
 
@@ -21,7 +26,7 @@ ENVSUBST_VARS = $${COLLECTOR_IMAGE} $${HOST_COLLECTOR_IMAGE} $${IMAGE_PULL_POLIC
 
 export COLLECTOR_IMAGE HOST_COLLECTOR_IMAGE IMAGE_PULL_POLICY K8S_CLUSTER_NAME K8S_CLUSTER_UID DT_ENDPOINT
 
-.PHONY: all build docker-build docker-build-host kind-cluster kind-load deploy deploy-kind create-secret undeploy undeploy-kind smoke-test clean apply-openpipeline
+.PHONY: all build docker-build docker-build-host kind-cluster kind-load deploy deploy-kind create-secret undeploy undeploy-kind smoke-test clean apply-openpipeline extension-certs extension-pack extension-sign extension-trust-ca extension-upload
 
 all: build
 
@@ -104,6 +109,57 @@ smoke-test:
 ## Tear down the kind cluster entirely
 clean:
 	$(KIND) delete cluster --name $(KIND_CLUSTER)
+
+## Generate a self-signed root CA + developer certificate for dev signing (once per machine).
+## Certs are written to extension/certs/ which is gitignored.
+## After running this, upload extension/certs/ca.pem to Dynatrace:
+##   Settings → Extensions → Extension Execution Controller → Developer certificate
+extension-certs:
+	@mkdir -p $(EXT_CERTS)
+	dt extensions genca \
+	    --ca-cert $(EXT_CERTS)/ca.pem \
+	    --ca-key  $(EXT_CERTS)/ca.key \
+	    --no-ca-passphrase
+	dt extensions generate-developer-pem \
+	    --ca-crt $(EXT_CERTS)/ca.pem \
+	    --ca-key $(EXT_CERTS)/ca.key \
+	    --name "dt-k8s-otel dev" \
+	    -o $(EXT_CERTS)/developer.pem
+
+## Assemble extension/extension.yaml into a ZIP (inner package, not yet signed).
+extension-pack:
+	@mkdir -p dist/extension
+	dt extensions assemble \
+	    --src extension/src \
+	    -o $(EXT_ZIP) \
+	    --force
+
+## Assemble and sign the extension (requires certs in extension/certs/).
+## Run `make extension-certs` once first, then upload extension/certs/ca.pem to DT.
+extension-sign: extension-pack
+	dt extensions sign \
+	    --src $(EXT_ZIP) \
+	    -o $(EXT_BUNDLE) \
+	    --key $(EXT_CERTS)/developer.pem \
+	    --force
+
+## Upload the self-signed root CA cert to DT (once per CA). Requires DT_API_TOKEN and DT_TENANT_URL.
+extension-trust-ca:
+	@test -n "$(DT_API_TOKEN)"   || (echo "ERROR: Set DT_API_TOKEN (classic token, Write extension scope)" && exit 1)
+	@test -n "$(DT_TENANT_URL)"  || (echo "ERROR: Set DT_TENANT_URL (e.g. https://<tenant>.live.dynatrace.com)" && exit 1)
+	curl -sf -X POST \
+	    "$(DT_TENANT_URL)/api/v2/extensions/developerCertificates" \
+	    -H "Authorization: Api-Token $(DT_API_TOKEN)" \
+	    -H "Content-Type: application/octet-stream" \
+	    --data-binary @$(EXT_CERTS)/ca.pem
+
+## Assemble, sign, and upload the extension to the configured DT tenant. Requires DT_API_TOKEN and DT_TENANT_URL.
+extension-upload: extension-sign
+	@test -n "$(DT_API_TOKEN)"   || (echo "ERROR: Set DT_API_TOKEN (classic token, Write extension scope)" && exit 1)
+	@test -n "$(DT_TENANT_URL)"  || (echo "ERROR: Set DT_TENANT_URL (e.g. https://<tenant>.live.dynatrace.com)" && exit 1)
+	dt extensions upload $(EXT_BUNDLE) \
+	    --tenant-url $(DT_TENANT_URL) \
+	    --api-token $(DT_API_TOKEN)
 
 ## Apply OpenPipeline settings to Dynatrace.
 ## Applies topology pipeline + both metrics pipeline definitions (always idempotent).

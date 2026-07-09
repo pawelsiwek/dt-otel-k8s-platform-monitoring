@@ -1,0 +1,11 @@
+name: custom:dt-k8s-otel-topology
+version: 1.0.2
+minDynatraceVersion: "1.330.0"
+author:
+  name: ""
+
+openpipeline:
+  pipelines:
+    - displayName: "K8s OTel Metrics: Entity Extraction"
+      pipelinePath: "openpipeline/k8s-otel-entities.pipeline.json"
+      configScope: metrics
