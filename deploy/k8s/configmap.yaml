@@ -157,6 +157,27 @@ data:
         timeout: 10s
         send_batch_size: 1000
 
+      # Claims k8s metrics for the extension's metrics ingest source. That source
+      # routes to k8s-otel-metrics-enrichment by default; repoint it at
+      # k8s-otel-metrics-extraction (or disable it) in DT without redeploying.
+      transform/openpipeline_source_metrics:
+        metric_statements:
+          - context: resource
+            statements:
+              - set(attributes["dt.openpipeline.source"], "custom:dt-k8s-otel-topology")
+
+      # Tags logs with the extension's source so the logs routing rule can match on
+      # it instead of enumerating event.provider values. Note this does NOT let an
+      # extension ingest source claim the data — for that DT matches the server-side
+      # ingest path, not this attribute — but a routing rule can read it fine.
+      # Runs last so records fanned out by dtk8stopology / dtk8seventsprocessor
+      # are tagged too.
+      transform/openpipeline_source_logs:
+        log_statements:
+          - context: log
+            statements:
+              - set(attributes["dt.openpipeline.source"], "custom:dt-k8s-otel-topology")
+
       # Phase 1: maps k8sobjects/topology pull-mode records to KUBERNETES_OTEL_TOPO topology
       # events via stock OTTL.  Each record's body IS the K8s object (no {type,object} wrapper).
       # resource context stamps cluster identity; log context sets per-kind topology attrs,
@@ -332,7 +353,7 @@ data:
       pipelines:
         metrics:
           receivers: [k8s_cluster]
-          processors: [memory_limiter, resourcedetection, k8sattributes, transform/workload_dims, batch]
+          processors: [memory_limiter, resourcedetection, k8sattributes, transform/workload_dims, transform/openpipeline_source_metrics, batch]
           exporters: [otlphttp/metrics, debug, alertingengine]
     
         # Topology pipeline: OTTL maps raw k8sobjects → KUBERNETES_OTEL_TOPO attrs;
@@ -340,14 +361,14 @@ data:
         # dtk8stopology fans out pod records into CONTAINER records with image enrichment.
         logs/topology:
           receivers: [k8s_objects/topology]
-          processors: [memory_limiter, transform/topology, groupbyattrs/pod, k8sattributes, transform/workload_dims, dtk8stopology, batch]
+          processors: [memory_limiter, transform/topology, groupbyattrs/pod, k8sattributes, transform/workload_dims, dtk8stopology, transform/openpipeline_source_logs, batch]
           exporters: [otlphttp/logs, debug]
 
         # Events pipeline: transform/k8sevents maps K8s Event objects → KUBERNETES_EVENT attrs;
         # dtk8seventsprocessor applies per-entity/cluster throttle and fans out OOM kills.
         logs/events:
           receivers: [k8s_objects/events]
-          processors: [memory_limiter, transform/k8sevents, dtk8seventsprocessor, batch]
+          processors: [memory_limiter, transform/k8sevents, dtk8seventsprocessor, transform/openpipeline_source_logs, batch]
           exporters: [otlphttp/logs, debug]
     
         # Phase G alerting pipeline — KUBERNETES_ANOMALY_DETECTION events from connector.

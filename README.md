@@ -102,15 +102,25 @@ in parallel under different keys — see the
 
 ## OpenPipeline
 
-The `openpipeline/` directory contains Dynatrace OpenPipeline rules that must be applied to the Dynatrace environment:
+OpenPipeline configuration ships inside the `custom:dt-k8s-otel-topology`
+extension, under `extension/src/openpipeline/`. Install it with
+`make extension-upload`; there is nothing to apply separately.
 
 | File | Purpose |
 |---|---|
-| `k8s-topology-routing.yaml` | Route topology events to the topology pipeline |
-| `k8s-topology-combined-pipeline.yaml` | Smartscape entity + edge extraction for all K8s entity types |
-| `k8s-metrics-routing.yaml` + `k8s-metrics-entity-enrichment.yaml` | Associate CUSTOM_K8S_* entities with metrics |
-| `kubernetes-events-metric.yaml` | Extract `dt.kubernetes.events` counter metric |
-| `kubernetes-anomaly-detection-routing.yaml` | Route anomaly detection events to Davis |
+| `logs.pipeline.json` | Smartscape entity + edge extraction for all K8s entity types, and the `kubernetes.events` counter metric |
+| `metrics-enrichment.pipeline.json` | Associate existing `K8S_*` entities with metric data points |
+| `metrics-extraction.pipeline.json` | Create `K8S_*` entities from metric data points (bundled, not routed by default) |
+| `metrics.source.json` | Ingest source that statically routes metrics to the pipelines above |
+
+Metrics route statically: the collector stamps `dt.openpipeline.source` and the
+bundled ingest source claims them. Logs additionally need
+`openpipeline/k8s-logs-routing.yaml` (`dtctl apply -f …`), because
+`dt.openpipeline.source` is assigned server-side from the ingest path — an
+extension ingest source cannot claim logs pushed to the generic OTLP endpoint.
+
+To switch metrics from enrichment to extraction, or to turn metric processing
+off, edit the metrics ingest source in Dynatrace — no redeploy or rebuild.
 
 ## Testing
 
@@ -133,5 +143,6 @@ make smoke-test
 
 | Doc | Purpose |
 |---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | End-to-end data flow, routing, and entity model |
 | [CUSTOM_PROCESSORS.md](docs/CUSTOM_PROCESSORS.md) | Architecture of the two custom processors |
 | [TOKEN_WORKAROUND.md](docs/TOKEN_WORKAROUND.md) | Two-token workaround details |

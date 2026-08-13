@@ -1,0 +1,11 @@
+{
+  "metadataList": [],
+  "displayName": "K8s OTel Collector",
+  "sourceType": "extension",
+  "source": "custom:dt-k8s-otel-topology",
+  "enabled": true,
+  "staticRouting": {
+    "pipelineType": "custom",
+    "pipelineId": "k8s-otel-metrics-enrichment"
+  }
+}

@@ -29,11 +29,11 @@ Verify the OpenPipeline enrichment is firing and producing entity IDs:
 fetch metric.series, from:now()-10m
 | filter metric.key == "<metric.key>"
 | fields metric.key,
-         dt.smartscape.custom_k8s_cluster,
-         dt.smartscape.custom_k8s_namespace,
-         dt.smartscape.custom_k8s_pod,
-         dt.smartscape.custom_container,
-         dt.smartscape.custom_k8s_deployment   -- whichever are relevant
+         dt.smartscape.k8s_cluster,
+         dt.smartscape.k8s_namespace,
+         dt.smartscape.k8s_pod,
+         dt.smartscape.container,
+         dt.smartscape.k8s_deployment   -- whichever are relevant
 | limit 5
 ```
 Every `dt.smartscape.*` field relevant to the metric's entity scope must be non-null. A null value means the OpenPipeline enrichment step is not matching (check the matcher condition in the pipeline settings, and verify the idComponent fields are present on the metric).
@@ -41,7 +41,7 @@ Every `dt.smartscape.*` field relevant to the metric's entity scope must be non-
 ### 2c. Entity properties
 Verify the entity itself has correct properties (not just the metric):
 ```dql
-smartscapeNodes CUSTOM_K8S_POD   -- or CUSTOM_CONTAINER etc.
+smartscapeNodes K8S_POD   -- or CONTAINER etc.
 | filter id == "<entity-id>"
 | fields id, name, k8s.workload.name, k8s.workload.kind, k8s.namespace.name, k8s.container.name
 ```
@@ -69,28 +69,87 @@ If entity properties are wrong (e.g. workload.name shows a different service), i
 
 ## 5. OpenPipeline
 
-Changes to `openpipeline/*.yaml` must be applied to DT immediately after editing:
-```bash
-dtctl apply -f openpipeline/<file>.yaml --plain
+All pipelines live in the extension under `extension/src/openpipeline/`. One
+routing rule (`openpipeline/k8s-logs-routing.yaml`) is applied separately —
+see "Why logs still need a routing rule" below.
+
+Use the **`dt-extension-deploy` skill** to upload and activate. The dtctl
+platform token is sufficient; no classic API token is needed except for the
+one-time developer-CA upload.
+
+Bump `EXT_VERSION` in the Makefile and `version:` in `extension/src/extension.yaml`
+together — DT rejects a re-upload of an existing version.
+
+### What ships
+
+| File | `customId` | Scope |
+|---|---|---|
+| `logs.pipeline.json` | `k8s-otel-logs` | topology entity extraction (10 types) + `kubernetes.events` counter |
+| `metrics-enrichment.pipeline.json` | `k8s-otel-metrics-enrichment` | `extractNode: false` lookups, plus container extraction |
+| `metrics-extraction.pipeline.json` | `k8s-otel-metrics-extraction` | `extractNode: true` for all 10 types |
+| `metrics.source.json` | — | metrics ingest source, static routing |
+
+### Routing: metrics static, logs by rule
+
+**Metrics** route statically. `transform/openpipeline_source_metrics` stamps
+`dt.openpipeline.source = "custom:dt-k8s-otel-topology"`, the bundled ingest
+source claims it, and `staticRouting.pipelineId` references the pipeline's
+`customId` — so no objectId patching is needed.
+
+**Logs** need `openpipeline/k8s-logs-routing.yaml`, applied with
+`dtctl apply -f openpipeline/k8s-logs-routing.yaml --plain`. Its `pipelineId`
+*is* an objectId and must be re-resolved if the extension is installed into a
+different environment.
+
+#### Why logs still need a routing rule
+
+`dt.openpipeline.source` is assigned **server-side from the ingest path**. An
+`extension`-type ingest source therefore only claims data delivered through the
+extension execution path (EEC). This collector pushes straight to
+`/api/v2/otlp/v1/logs`, so its logs arrive on the built-in OTLP source and must
+be routed by rule.
+
+Metrics behave differently in practice and do match the bundled source, which is
+why there is no metrics routing rule.
+
+This was verified the hard way — setting `dt.openpipeline.source` on logs to the
+bare name, to the `extension:`-prefixed name, and adding
+`dt.event.route_to_openpipeline: "true"` all left records in `logs:default`.
+Do not re-add a logs ingest source expecting it to work; it installs cleanly and
+silently never matches.
+
+To diagnose routing, read `dt.openpipeline.pipelines` off an ingested record:
+```dql
+fetch logs, from:now()-5m | filter event.provider == "KUBERNETES_OTEL_TOPO"
+| summarize cnt=count(), by:{dt.openpipeline.pipelines}
 ```
-Verify the applied state with `dtctl describe settings <objectId> -o json --plain`.
+`logs:k8s-otel-logs` means the rule is working; `logs:default` means it is not.
 
-### Applying all pipelines at once
+DT normalizes a logs-scope ingest source to `extension:<name>` on store — that is
+cosmetic and true of every extension, not a bug.
 
-Use the `apply-openpipeline` Makefile target to apply everything in one shot:
+### Metrics modes (post-install, no rebuild)
+
+The metrics ingest source targets `k8s-otel-metrics-enrichment` by default.
+Both toggles are edits to that one settings object, in the DT OpenPipeline UI or
+via `dtctl`:
+
+* **Enrichment (default)** — attaches `dt.smartscape.*` entity IDs to metric data
+  points without creating entities. Entity creation is the logs pipeline's job.
+* **Extraction** — repoint `staticRouting.pipelineId` to
+  `k8s-otel-metrics-extraction` to also create nodes/edges from metrics. Useful
+  when the topology pull is unavailable, or to fill the 120s gap between pulls.
+  Writes fewer entity properties than the logs pipeline (no `k8s.object`,
+  `k8s.pod.phase`, `k8s.node.system_uuid`).
+* **Off** — set `enabled: false` on the metrics ingest source.
+
+Inspect the live state with:
 ```bash
-make apply-openpipeline                        # Mode A: enrichment-only metrics (default)
-make apply-openpipeline METRICS_EXTRACT=true   # Mode B: extraction + enrichment metrics
+dtctl get settings --schema builtin:openpipeline.metrics.ingest-sources --plain
 ```
 
-This applies: topology pipeline + routing, both metrics pipeline definitions, and the correct metrics routing for the selected mode.
+### Spans
 
-### Metrics pipeline modes
-
-* **Mode A (default)** — `k8s-metrics-entity-enrichment.yaml`: enriches metric data points with `dt.smartscape.*` entity IDs (`extractNode: false`). Does **not** create new Smartscape entities from metrics. Relies on the topology log pipeline for entity creation.
-
-* **Mode B** — `k8s-metrics-entity-extraction.yaml`: enriches **and** creates Smartscape nodes/edges from metric data points (`extractNode: true` for all entity types). Useful when the topology pipeline is unavailable or as a faster-refresh supplement between 120s pull cycles. Writes a subset of entity properties compared to the topology pipeline (no `k8s.object`, `k8s.pod.phase`, `k8s.node.system_uuid`, or `k8s.container.image` — use topology pipeline for full entity detail).
-
-### After updating the extraction pipeline's objectId
-
-After the first `dtctl apply` of `k8s-metrics-entity-extraction.yaml`, DT assigns an `objectId`. Commit it back to the YAML and update the `pipelineId` placeholder in `k8s-metrics-routing-extraction.yaml` to match.
+Span-based entity extraction is not currently shipped. The previous standalone
+`k8s-spans-entity-extraction.yaml` was removed in the extension migration and is
+recoverable from git history if it is reintroduced.

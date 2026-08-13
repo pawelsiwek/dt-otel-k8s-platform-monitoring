@@ -131,15 +131,15 @@ else:
 section("C. Smartscape entity coverage")
 
 REQUIRED_ENTITIES = [
-    "CUSTOM_K8S_CLUSTER",
-    "CUSTOM_K8S_NAMESPACE",
-    "CUSTOM_K8S_NODE",
-    "CUSTOM_K8S_POD",
-    "CUSTOM_K8S_DEPLOYMENT",
-    "CUSTOM_K8S_DAEMONSET",
-    "CUSTOM_K8S_REPLICASET",
-    "CUSTOM_K8S_SERVICE",
-    "CUSTOM_CONTAINER",
+    "K8S_CLUSTER",
+    "K8S_NAMESPACE",
+    "K8S_NODE",
+    "K8S_POD",
+    "K8S_DEPLOYMENT",
+    "K8S_DAEMONSET",
+    "K8S_REPLICASET",
+    "K8S_SERVICE",
+    "CONTAINER",
 ]
 
 for etype in REQUIRED_ENTITIES:
@@ -199,7 +199,7 @@ GAPS = [
     "dt.kubernetes.events (count metric) -- KubernetesLogEvents port deferred post-E",
     "KUBERNETES_EVENT / KUBERNETES_INFERRED_EVENT / KUBERNETES_ANOMALY_DETECTION -- deferred post-E",
     "K8S_STATEFULSET / K8S_JOB / K8S_CRONJOB -- receiver supports them; no objects in test cluster",
-    "Native K8S_* Smartscape types -- OTLP entity signal not yet in Dynatrace Platform; using CUSTOM_K8S_*",
+    "K8S_* Smartscape types are extension-owned (custom:dt-k8s-otel-topology), not the platform-native OTLP entity signal",
     "CPU in cores (OTel) vs millicores (legacy); Sum[monotonic] counters require rate() in DQL",
 ]
 for g in GAPS:

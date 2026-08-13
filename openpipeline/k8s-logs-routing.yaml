@@ -1,0 +1,29 @@
+# Routes the collector's K8s logs to the extension's k8s-otel-logs pipeline.
+#
+# Why this exists when metrics need no routing rule: dt.openpipeline.source is
+# assigned server-side from the ingest path, so an extension-type ingest source
+# only claims data delivered through the extension execution path. This collector
+# pushes straight to /api/v2/otlp/v1/logs, so its logs land on the built-in OTLP
+# source and must be routed by rule. Metrics do match the bundled ingest source,
+# which is why there is no metrics routing rule.
+#
+# The matcher reads dt.openpipeline.source, which the collector sets in
+# transform/openpipeline_source_logs. Matching the extension identity rather
+# than enumerating event.provider values means new providers route automatically.
+#
+# pipelineId is the objectId DT assigned to the bundled k8s-otel-logs pipeline.
+# It changes if the extension is reinstalled into a different environment —
+# re-resolve it with:
+#   dtctl get settings --schema builtin:openpipeline.logs.pipelines --plain
+#
+# Apply: dtctl apply -f openpipeline/k8s-logs-routing.yaml --plain
+type: setting
+schemaId: builtin:openpipeline.logs.routing
+scope: environment
+value:
+  routingEntries:
+    - description: "Route K8s OTel collector logs to the extension's logs pipeline"
+      enabled: true
+      matcher: 'dt.openpipeline.source == "custom:dt-k8s-otel-topology"'
+      pipelineType: custom
+      pipelineId: "<resolve with: dtctl get settings --schema builtin:openpipeline.logs.pipelines --plain>"

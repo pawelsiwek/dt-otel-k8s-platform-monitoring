@@ -1,11 +1,39 @@
 name: custom:dt-k8s-otel-topology
-version: 1.0.2
+version: 1.2.0
 minDynatraceVersion: "1.330.0"
 author:
   name: ""
 
+# All three pipelines ship here. Routing differs by signal:
+#
+# * Metrics route statically. The bundled ingest source claims data carrying
+#   dt.openpipeline.source == "custom:dt-k8s-otel-topology", which the collector
+#   stamps in transform/openpipeline_source_metrics.
+#
+# * Logs need a routing rule (openpipeline/k8s-logs-routing.yaml) and there is
+#   deliberately no logs ingest source here. dt.openpipeline.source is assigned
+#   server-side from the ingest path, so an extension-type source only claims
+#   data delivered via the extension execution path — not logs pushed straight
+#   to /api/v2/otlp/v1/logs, which is how this collector exports. A logs source
+#   would install cleanly and silently never match.
+#
+# The metrics source targets the enrichment pipeline by default. The extraction
+# pipeline is bundled but unrouted — repoint the metrics source at
+# "k8s-otel-metrics-extraction" to have entities created from metrics instead,
+# or set the source to enabled: false to stop processing metrics altogether.
+# Both are post-install edits; neither needs a rebuild.
 openpipeline:
   pipelines:
+    - displayName: "K8s OTel Logs: Topology + Events"
+      pipelinePath: "openpipeline/logs.pipeline.json"
+      configScope: logs
+    - displayName: "K8s OTel Metrics: Entity Enrichment"
+      pipelinePath: "openpipeline/metrics-enrichment.pipeline.json"
+      configScope: metrics
     - displayName: "K8s OTel Metrics: Entity Extraction"
-      pipelinePath: "openpipeline/k8s-otel-entities.pipeline.json"
+      pipelinePath: "openpipeline/metrics-extraction.pipeline.json"
+      configScope: metrics
+  sources:
+    - displayName: "K8s OTel Collector"
+      sourcePath: "openpipeline/metrics.source.json"
       configScope: metrics

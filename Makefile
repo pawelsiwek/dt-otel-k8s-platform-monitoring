@@ -3,7 +3,7 @@ HOST_COLLECTOR_IMAGE ?= dt-otelcol-k8s-host:latest
 KIND_CLUSTER         ?= dt-otelcol-smoke
 KIND                 ?= $(HOME)/go/bin/kind
 OCB                  ?= $(HOME)/go/bin/builder
-EXT_VERSION          ?= 1.0.2
+EXT_VERSION          ?= 1.2.0
 EXT_ZIP              ?= dist/extension/custom.dt-k8s-otel-topology-$(EXT_VERSION).zip
 EXT_BUNDLE           ?= dist/extension/bundle-$(EXT_VERSION).zip
 EXT_CERTS            ?= extension/certs
@@ -19,14 +19,13 @@ K8S_CLUSTER_UID      ?=
 DT_ENDPOINT          ?=
 DT_TENANT_URL        ?=
 KUBECTL_FLAGS        ?=
-METRICS_EXTRACT      ?= false
 
 # Limit envsubst to only deploy-time variables; OTel runtime refs (${env:VAR}) are left intact.
 ENVSUBST_VARS = $${COLLECTOR_IMAGE} $${HOST_COLLECTOR_IMAGE} $${IMAGE_PULL_POLICY} $${K8S_CLUSTER_NAME} $${K8S_CLUSTER_UID} $${DT_ENDPOINT}
 
 export COLLECTOR_IMAGE HOST_COLLECTOR_IMAGE IMAGE_PULL_POLICY K8S_CLUSTER_NAME K8S_CLUSTER_UID DT_ENDPOINT
 
-.PHONY: all build docker-build docker-build-host kind-cluster kind-load deploy deploy-kind create-secret undeploy undeploy-kind smoke-test clean apply-openpipeline extension-certs extension-pack extension-sign extension-trust-ca extension-upload
+.PHONY: all build docker-build docker-build-host kind-cluster kind-load deploy deploy-kind create-secret undeploy undeploy-kind smoke-test clean extension-certs extension-pack extension-sign extension-trust-ca extension-upload
 
 all: build
 
@@ -161,30 +160,7 @@ extension-upload: extension-sign
 	    --tenant-url $(DT_TENANT_URL) \
 	    --api-token $(DT_API_TOKEN)
 
-## Apply OpenPipeline settings to Dynatrace.
-## Applies topology pipeline + both metrics pipeline definitions (always idempotent).
-## Also applies the spans entity extraction pipeline and routing (always-on).
-## Then applies the metrics routing:
-##   METRICS_EXTRACT=false (default): enrichment-only routing (Mode A)
-##   METRICS_EXTRACT=true:            extraction+enrichment routing (Mode B)
-##
-## Usage:
-##   make apply-openpipeline                        # Mode A (default, enrichment-only)
-##   make apply-openpipeline METRICS_EXTRACT=true   # Mode B (extraction + enrichment)
-apply-openpipeline:
-	@echo "=== Applying OpenPipeline settings (METRICS_EXTRACT=$(METRICS_EXTRACT)) ==="
-	dtctl apply -f openpipeline/k8s-topology-combined-pipeline.yaml --plain
-	dtctl apply -f openpipeline/k8s-topology-routing.yaml --plain
-	dtctl apply -f openpipeline/k8s-metrics-entity-enrichment.yaml --plain
-	dtctl apply -f openpipeline/k8s-metrics-entity-extraction.yaml --plain
-ifeq ($(METRICS_EXTRACT),true)
-	@echo "--- Applying extraction routing (Mode B) ---"
-	dtctl apply -f openpipeline/k8s-metrics-routing-extraction.yaml --plain
-else
-	@echo "--- Applying enrichment-only routing (Mode A) ---"
-	dtctl apply -f openpipeline/k8s-metrics-routing.yaml --plain
-endif
-	@echo "--- Applying spans entity extraction (always-on) ---"
-	dtctl apply -f openpipeline/k8s-spans-entity-extraction.yaml --plain
-	dtctl apply -f openpipeline/k8s-spans-routing.yaml --plain
-	@echo "=== Done ==="
+# OpenPipeline configuration ships inside the extension (see extension/src) and
+# is installed by `make extension-upload`. There is no separate apply step, and
+# no routing rules to maintain — the bundled ingest sources route statically on
+# the dt.openpipeline.source attribute the collector stamps.
