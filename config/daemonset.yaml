@@ -161,7 +161,7 @@ exporters:
   otlphttp:
     endpoint: "${env:DT_ENDPOINT}"
     headers:
-      Authorization: "Api-Token ${env:DT_API_TOKEN}"
+      Authorization: "${env:DT_AUTHORIZATION}"
 
   debug:
     verbosity: basic

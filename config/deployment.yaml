@@ -342,17 +342,17 @@ connectors:
         event_description: "DaemonSet {{k8s.daemonset.name}} has {{value}} misscheduled pods"
 
 exporters:
-  # Metrics: classic API token (metrics.ingest scope).
+  # Authorization header value from Secret key "authorization": "Bearer <dt0s16 platform token>" or "Api-Token <dt0c01 classic token>".
   otlphttp/metrics:
     endpoint: "${env:DT_ENDPOINT}"
     headers:
-      Authorization: "Api-Token ${env:DT_API_TOKEN}"
+      Authorization: "${env:DT_AUTHORIZATION}"
 
-  # Logs/topology events: same classic token (logs.ingest scope).
+  # Logs/topology events: same header.
   otlphttp/logs:
     endpoint: "${env:DT_ENDPOINT}"
     headers:
-      Authorization: "Api-Token ${env:DT_API_TOKEN}"
+      Authorization: "${env:DT_AUTHORIZATION}"
 
   debug:
     verbosity: basic
