@@ -344,15 +344,15 @@ connectors:
 exporters:
   # Metrics: classic API token (metrics.ingest scope).
   otlphttp/metrics:
-    endpoint: "${DT_ENDPOINT}"
+    endpoint: "${env:DT_ENDPOINT}"
     headers:
-      Authorization: "Api-Token ${DT_API_TOKEN}"
+      Authorization: "Api-Token ${env:DT_API_TOKEN}"
 
-  # Logs/topology events: platform token (storage:logs:write scope).
+  # Logs/topology events: same classic token (logs.ingest scope).
   otlphttp/logs:
-    endpoint: "${DT_ENDPOINT}"
+    endpoint: "${env:DT_ENDPOINT}"
     headers:
-      Authorization: "Api-Token ${DT_PLATFORM_TOKEN}"
+      Authorization: "Api-Token ${env:DT_API_TOKEN}"
 
   debug:
     verbosity: basic

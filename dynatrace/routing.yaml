@@ -1,0 +1,21 @@
+# Routing singletons for Bluebox K8s OTel. Replace the two REPLACE_WITH_* values with the
+# pipeline objectIds printed by dtctl after applying pipelines.yaml, then: dtctl apply -f dynatrace/routing.yaml
+# Singletons are replace-all: this file assumes the tenant has no other routing entries.
+- schemaId: builtin:openpipeline.logs.routing
+  scope: environment
+  value:
+    routingEntries:
+    - enabled: true
+      description: Bluebox K8s OTel - topology/events logs to k8s-otel-logs
+      matcher: dt.openpipeline.source == "custom:dt-k8s-otel-topology" or matchesValue(event.provider, {"KUBERNETES_OTEL_TOPO","KUBERNETES_EVENT","KUBERNETES_INFERRED_EVENT","KUBERNETES_ANOMALY_DETECTION"})
+      pipelineType: custom
+      pipelineId: REPLACE_WITH_LOGS_PIPELINE_OBJECT_ID
+- schemaId: builtin:openpipeline.metrics.routing
+  scope: environment
+  value:
+    routingEntries:
+    - enabled: true
+      description: Bluebox K8s OTel - k8s.*/container.* metrics to k8s-otel-metrics-enrichment
+      matcher: isNotNull(k8s.cluster.uid) and matchesValue(metric.key, {"k8s.*","container.*"})
+      pipelineType: custom
+      pipelineId: REPLACE_WITH_METRICS_PIPELINE_OBJECT_ID
