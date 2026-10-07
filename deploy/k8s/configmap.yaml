@@ -11,7 +11,16 @@ data:
         collection_interval: 60s
         node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
         allocatable_types_to_report: [cpu, memory, pods]
-    
+        # Bluebox: metrics queried by mission control / dt-obs-otel-kubernetes and the
+        # restart cause (OOMKilled, CrashLoopBackOff, Evicted, ...). Off by default.
+        metrics:
+          k8s.node.condition:
+            enabled: true
+          k8s.container.status.reason:
+            enabled: true
+          k8s.pod.status_reason:
+            enabled: true
+
       # Topology receiver: all objects in pull mode so every pod is discovered on
       # each 120s cycle regardless of when it was created vs when the collector started.
       # Watch mode only fires for changes after the watch begins, so pre-existing pods
@@ -47,7 +56,7 @@ data:
             group: apps
             mode: pull
             interval: 120s
-    
+
       # Events receiver: watch mode only — pods for OOM-kill detection,
       # K8s events for KUBERNETES_EVENT Davis ingestion.
       k8s_objects/events:
@@ -58,19 +67,19 @@ data:
           - name: events
             group: ""
             mode: watch          # Phase F: watch K8s events API for KUBERNETES_EVENT ingestion
-    
+
     processors:
       memory_limiter:
         limit_mib: 400
         spike_limit_mib: 100
         check_interval: 5s
-    
+
       # Stamps k8s.cluster.name and k8s.cluster.uid from OTEL_RESOURCE_ATTRIBUTES env var.
       resourcedetection:
         detectors: [env]
         timeout: 2s
         override: false
-    
+
       # Enriches k8s_cluster container metrics with workload owner names (deployment,
       # daemonset, etc.) by looking up the pod by k8s.pod.uid in the k8s API.
       # Required because k8sclusterreceiver does not include owner references on
@@ -90,7 +99,7 @@ data:
           - sources:
               - from: resource_attribute
                 name: k8s.pod.uid
-    
+
       # Splits a shared ResourceLogs into one ResourceLogs per distinct k8s.pod.uid
       # value before k8sattributes runs. k8sobjects pull mode batches all pods in a
       # namespace into a single ResourceLogs; transform/topology writes per-pod
@@ -102,7 +111,7 @@ data:
       # pass through unchanged.
       groupbyattrs/pod:
         keys: [k8s.pod.uid]
-    
+
       # Derives k8s.workload.name / k8s.workload.kind from the kind-specific resource
       # attribute emitted by k8sclusterreceiver (e.g. k8s.deployment.name → workload.name).
       # log_statements promote workload names from resource.attributes (set by k8sattributes
@@ -152,7 +161,7 @@ data:
               - set(attributes["k8s.workload.kind"], "job") where attributes["k8s.job.name"] != nil and attributes["k8s.workload.kind"] == nil
               - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.name"] == nil
               - set(attributes["k8s.workload.kind"], "replicaset") where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.kind"] == nil
-    
+
       batch:
         timeout: 10s
         send_batch_size: 1000
@@ -243,11 +252,15 @@ data:
 
       # Phase 2: container fan-out only — emits one CONTAINER record per
       # containers[]/initContainers[] element enriched with k8s.container.image.
+      # All other entity types are handled by transform/topology + k8sattributes upstream.
       dtk8stopology:
         cluster_name: "${env:K8S_CLUSTER_NAME}"
         cluster_uid: "${env:K8S_CLUSTER_UID}"
 
       # Phase 3: K8s Event watch records → KUBERNETES_EVENT Davis event attrs via OTTL.
+      # Watch mode: body = {type, object: <Event>}. All statements gate on k8s.resource.name
+      # == "events" and body["type"] != "DELETED". dtk8seventsprocessor (below) then
+      # applies throttle and passes records through; pod records are routed to OOM fan-out.
       transform/k8sevents:
         log_statements:
           - context: resource
@@ -278,13 +291,15 @@ data:
               - set(attributes["event.start"], body["object"]["lastTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["lastTimestamp"] != nil
               - set(attributes["event.end"], body["object"]["lastTimestamp"]) where attributes["k8s.resource.name"] == "events" and body["type"] != "DELETED" and body["object"]["lastTimestamp"] != nil
 
-      # Phase 3: throttles KUBERNETES_EVENT records and fans out OOM kills.
+      # Phase 3: throttles KUBERNETES_EVENT records (mapped by transform/k8sevents) and
+      # fans out OOM-kill Pod MODIFIED watch events → KUBERNETES_INFERRED_EVENT.
+      # UID dedup dropped (Davis deduplicates events natively).
       dtk8seventsprocessor:
         cluster_name: "${env:K8S_CLUSTER_NAME}"
         cluster_uid: "${env:K8S_CLUSTER_UID}"
         max_events_per_entity_per_hour: 1000
         max_events_per_cluster_per_hour: 10000
-    
+
     connectors:
       # Phase G: MetricsToLogs connector — evaluates anomaly-detection rules
       # against incoming metric data points and emits KUBERNETES_ANOMALY_DETECTION
@@ -302,7 +317,7 @@ data:
             event_type: AVAILABILITY_EVENT
             event_name: "Container crash loop detected"
             event_description: "Container {{k8s.container.name}} restarted {{value}} times in the last {{window}}s"
-    
+
           - id: node_not_ready
             metric_key: k8s.node.condition_ready
             group_by: [k8s.cluster.uid, k8s.node.name]
@@ -312,7 +327,7 @@ data:
             event_type: AVAILABILITY_EVENT
             event_name: "Node not ready"
             event_description: "Node {{k8s.node.name}} has been not-ready for {{window}}s"
-    
+
           - id: deployment_unavailable
             metric_key: k8s.deployment.available
             group_by: [k8s.cluster.uid, k8s.namespace.name, k8s.deployment.name]
@@ -322,7 +337,7 @@ data:
             event_type: AVAILABILITY_EVENT
             event_name: "Deployment has no available replicas"
             event_description: "Deployment {{k8s.deployment.name}} in {{k8s.namespace.name}} has 0 available replicas"
-    
+
           - id: daemonset_misscheduled
             metric_key: k8s.daemonset.misscheduled_nodes
             group_by: [k8s.cluster.uid, k8s.namespace.name, k8s.daemonset.name]
@@ -332,31 +347,31 @@ data:
             event_type: ERROR_EVENT
             event_name: "DaemonSet has misscheduled pods"
             event_description: "DaemonSet {{k8s.daemonset.name}} has {{value}} misscheduled pods"
-    
+
     exporters:
       # Metrics: classic API token (metrics.ingest scope).
       otlphttp/metrics:
         endpoint: "${DT_ENDPOINT}"
         headers:
           Authorization: "Api-Token ${DT_API_TOKEN}"
-    
+
       # Logs/topology events: platform token (storage:logs:write scope).
       otlphttp/logs:
         endpoint: "${DT_ENDPOINT}"
         headers:
           Authorization: "Api-Token ${DT_PLATFORM_TOKEN}"
-    
+
       debug:
         verbosity: basic
-    
+
     service:
       pipelines:
         metrics:
           receivers: [k8s_cluster]
           processors: [memory_limiter, resourcedetection, k8sattributes, transform/workload_dims, transform/openpipeline_source_metrics, batch]
           exporters: [otlphttp/metrics, debug, alertingengine]
-    
-        # Topology pipeline: OTTL maps raw k8sobjects → KUBERNETES_OTEL_TOPO attrs;
+
+        # Topology pipeline: stock OTTL maps raw k8sobjects → KUBERNETES_OTEL_TOPO attrs;
         # k8sattributes resolves pod→workload; workload_dims promotes to record attrs;
         # dtk8stopology fans out pod records into CONTAINER records with image enrichment.
         logs/topology:
@@ -370,7 +385,7 @@ data:
           receivers: [k8s_objects/events]
           processors: [memory_limiter, transform/k8sevents, dtk8seventsprocessor, transform/openpipeline_source_logs, batch]
           exporters: [otlphttp/logs, debug]
-    
+
         # Phase G alerting pipeline — KUBERNETES_ANOMALY_DETECTION events from connector.
         logs/alerts:
           receivers: [alertingengine]
