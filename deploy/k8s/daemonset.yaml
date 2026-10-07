@@ -22,6 +22,15 @@ spec:
           imagePullPolicy: ${IMAGE_PULL_POLICY}
           args:
             - "--config=/conf/daemonset.yaml"
+          # Bluebox: filelog must read /var/log/pods (root:root 0640). Not privileged.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [DAC_READ_SEARCH]
           env:
             - name: DT_API_TOKEN
               valueFrom:
@@ -45,14 +54,21 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /conf
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
             limits:
               cpu: 300m
-              memory: 256Mi
+              memory: 512Mi
       volumes:
         - name: config
           configMap:
             name: dt-otelcol-daemonset-config
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: Directory

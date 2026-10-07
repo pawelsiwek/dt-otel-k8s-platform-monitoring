@@ -1,4 +1,4 @@
-module github.com/dynatrace-oss/dt-otelcol-k8s/connector/alertingengine
+module github.com/pawelsiwek/bluebox-otelcol/connector/alertingengine
 
 go 1.25.0
 

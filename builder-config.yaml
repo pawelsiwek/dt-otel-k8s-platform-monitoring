@@ -1,6 +1,6 @@
 dist:
-  name: dtotelcol
-  description: "Dynatrace Kubernetes OTel Collector"
+  name: bluebox-otelcol
+  description: "Bluebox Kubernetes OTel Collector (based on trauter/dt-otel-k8s-platform-monitoring)"
   output_path: ./dist
   otelcol_version: "0.153.0"
 
@@ -12,6 +12,7 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.153.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver v0.153.0
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.153.0
@@ -22,13 +23,13 @@ processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/cumulativetodeltaprocessor v0.153.0
-  - gomod: github.com/dynatrace-oss/dt-otelcol-k8s/processor/dtk8stopology v0.1.0
+  - gomod: github.com/pawelsiwek/bluebox-otelcol/processor/dtk8stopology v0.1.0
     path: ./processor/dtk8stopology
-  - gomod: github.com/dynatrace-oss/dt-otelcol-k8s/processor/dtk8seventsprocessor v0.1.0
+  - gomod: github.com/pawelsiwek/bluebox-otelcol/processor/dtk8seventsprocessor v0.1.0
     path: ./processor/dtk8seventsprocessor
 
 connectors:
-  - gomod: github.com/dynatrace-oss/dt-otelcol-k8s/connector/alertingengine v0.1.0
+  - gomod: github.com/pawelsiwek/bluebox-otelcol/connector/alertingengine v0.1.0
     path: ./connector/alertingengine
 
 exporters:

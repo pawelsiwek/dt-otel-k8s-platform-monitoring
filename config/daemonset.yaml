@@ -49,10 +49,22 @@ receivers:
               target_label: __name__
               replacement: '$$1'
 
+  # Bluebox: container stdout/stderr from /var/log/pods (CRI format on containerd/AKS).
+  # The container operator derives k8s.namespace.name, k8s.pod.name, k8s.pod.uid,
+  # k8s.container.name and k8s.container.restart_count from the file path.
+  filelog:
+    include: [/var/log/pods/*/*/*.log]
+    exclude: [/var/log/pods/dt-otelcol_*/*/*.log]
+    include_file_path: true
+    start_at: end
+    operators:
+      - id: container-parser
+        type: container
+
 processors:
   memory_limiter:
-    limit_mib: 256
-    spike_limit_mib: 64
+    limit_mib: 400
+    spike_limit_mib: 100
     check_interval: 5s
 
   # Enriches kubeletstats metrics with pod/workload metadata from K8s API.
@@ -78,6 +90,23 @@ processors:
 
   transform/workload_dims:
     metric_statements:
+      - context: resource
+        statements:
+          - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
+          - set(attributes["k8s.cluster.uid"], "${env:K8S_CLUSTER_UID}")
+          - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where attributes["k8s.deployment.name"] != nil
+          - set(attributes["k8s.workload.kind"], "deployment") where attributes["k8s.deployment.name"] != nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "statefulset") where attributes["k8s.statefulset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "cronjob") where attributes["k8s.cronjob.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "daemonset") where attributes["k8s.daemonset.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where attributes["k8s.job.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "job") where attributes["k8s.job.name"] != nil and attributes["k8s.workload.kind"] == nil
+          - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.name"] == nil
+          - set(attributes["k8s.workload.kind"], "replicaset") where attributes["k8s.replicaset.name"] != nil and attributes["k8s.workload.kind"] == nil
+    log_statements:
       - context: resource
         statements:
           - set(attributes["k8s.cluster.name"], "${env:K8S_CLUSTER_NAME}")
@@ -147,3 +176,9 @@ service:
       receivers: [prometheus/cadvisor]
       processors: [memory_limiter, transform/cadvisor, batch]
       exporters: [otlphttp, debug]
+    # Bluebox: pod logs. k8sattributes resolves workload by k8s.pod.uid (set by the
+    # container operator); not routed by the topology rule (no event.provider).
+    logs/pods:
+      receivers: [filelog]
+      processors: [memory_limiter, k8sattributes, transform/workload_dims, batch]
+      exporters: [otlphttp]

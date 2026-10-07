@@ -1,4 +1,4 @@
-module github.com/dynatrace-oss/dt-otelcol-k8s/processor/dtk8stopology
+module github.com/pawelsiwek/bluebox-otelcol/processor/dtk8stopology
 
 go 1.25.0
 

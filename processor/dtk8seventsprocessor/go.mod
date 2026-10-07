@@ -1,4 +1,4 @@
-module github.com/dynatrace-oss/dt-otelcol-k8s/processor/dtk8seventsprocessor
+module github.com/pawelsiwek/bluebox-otelcol/processor/dtk8seventsprocessor
 
 go 1.25.0
 
