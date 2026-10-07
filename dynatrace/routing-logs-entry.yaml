@@ -1,0 +1,13 @@
+# Logs routing ENTRY (not a whole object) for Bluebox K8s OTel: topology/events logs ->
+# logs pipeline k8s-otel-logs (creates CUSTOM_K8S_* entities).
+# The logs routing singleton usually already holds other teams' entries and dtctl apply
+# replaces it wholesale, so add this entry by hand at the TOP of value.routingEntries:
+#   dtctl edit settings <logs-routing-objectId>
+# and replace REPLACE_WITH_LOGS_PIPELINE_OBJECT_ID with the logs pipeline objectId.
+# If the tenant has no logs routing object at all, wrap it as in routing-metrics.yaml
+# (schemaId: builtin:openpipeline.logs.routing) and dtctl apply it.
+- enabled: true
+  description: Bluebox K8s OTel - topology/events logs to k8s-otel-logs
+  matcher: dt.openpipeline.source == "custom:dt-k8s-otel-topology" or matchesValue(event.provider, {"KUBERNETES_OTEL_TOPO","KUBERNETES_EVENT","KUBERNETES_INFERRED_EVENT","KUBERNETES_ANOMALY_DETECTION"})
+  pipelineType: custom
+  pipelineId: REPLACE_WITH_LOGS_PIPELINE_OBJECT_ID

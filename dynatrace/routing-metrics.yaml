@@ -1,0 +1,16 @@
+# Metrics routing singleton for Bluebox K8s OTel: k8s.*/container.* metrics -> metrics
+# enrichment pipeline (adds dt.smartscape.custom_k8s_* IDs).
+# Replace REPLACE_WITH_METRICS_PIPELINE_OBJECT_ID with the metrics pipeline objectId, then:
+#   dtctl apply -f dynatrace/routing-metrics.yaml
+# Singleton is replace-all: use this file only if the tenant has no metrics routing entries
+# (dtctl get settings --schema builtin:openpipeline.metrics.routing). Otherwise add the entry
+# below to the existing object with dtctl edit.
+- schemaId: builtin:openpipeline.metrics.routing
+  scope: environment
+  value:
+    routingEntries:
+    - enabled: true
+      description: Bluebox K8s OTel - k8s.*/container.* metrics to k8s-otel-metrics-enrichment
+      matcher: isNotNull(k8s.cluster.uid) and matchesValue(metric.key, {"k8s.*","container.*"})
+      pipelineType: custom
+      pipelineId: REPLACE_WITH_METRICS_PIPELINE_OBJECT_ID
