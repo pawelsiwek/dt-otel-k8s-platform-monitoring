@@ -3,7 +3,8 @@
 # The logs routing singleton usually already holds other teams' entries and dtctl apply
 # replaces it wholesale, so add this entry by hand at the TOP of value.routingEntries:
 #   dtctl edit settings <logs-routing-objectId>
-# and replace REPLACE_WITH_LOGS_PIPELINE_OBJECT_ID with the logs pipeline objectId.
+# and replace REPLACE_WITH_LOGS_PIPELINE_OBJECT_ID with the logs pipeline objectId:
+#   dtctl get settings --schema builtin:openpipeline.logs.pipelines --jq '.[] | select(.value.customId=="k8s-otel-logs") | .objectId'
 # If the tenant has no logs routing object at all, wrap it as in routing-metrics.yaml
 # (schemaId: builtin:openpipeline.logs.routing) and dtctl apply it.
 - enabled: true
