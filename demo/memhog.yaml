@@ -1,0 +1,39 @@
+# RCA demo workload. Baseline: allocates 50M under a 100Mi limit (healthy).
+# The "bad change" is a config bump: kubectl -n poc-demo set env deployment/memhog MEM=200M
+# -> OOMKilled -> CrashLoopBackOff.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: poc-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memhog
+  namespace: poc-demo
+  labels:
+    app: memhog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memhog
+  template:
+    metadata:
+      labels:
+        app: memhog
+    spec:
+      containers:
+        - name: memhog
+          image: polinux/stress:1.0.4
+          command: ["sh", "-c", "echo allocating $MEM; stress --vm 1 --vm-bytes $MEM --vm-hang 1"]
+          env:
+            - name: MEM
+              value: 50M
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 100Mi
